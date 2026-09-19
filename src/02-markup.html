@@ -1,0 +1,30 @@
+
+<aside class="side" aria-label="Menu principal">
+  <div class="logo" id="logo-side"></div>
+  <nav class="nav" id="nav-side"></nav>
+  <div class="side-card" id="side-card"></div>
+</aside>
+
+<div class="shell">
+  <header class="top">
+    <div class="logo" id="logo-top"></div>
+    <label class="search">
+      <span class="sr">Buscar</span>
+      <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="q" type="search" placeholder="Buscar transações, metas, relatórios..." autocomplete="off">
+      <button class="pill tb-month" type="button" data-act="month-pop" id="tb-month"></button>
+    </label>
+    <button class="btn btn-p btn-add" type="button" data-act="add-gasto" id="btn-add"></button>
+    <div class="top-sp"></div>
+    <button class="icon-btn" type="button" data-act="theme-pop" id="btn-theme" aria-label="Tema"></button>
+    <button class="icon-btn" type="button" data-act="notifs" id="btn-bell" aria-label="Avisos"></button>
+    <button class="user" type="button" data-act="user-pop" id="user-btn"></button>
+  </header>
+  <main id="main" class="page" tabindex="-1"></main>
+</div>
+
+<nav class="bnav" id="nav-bottom" aria-label="Menu"></nav>
+<button class="fab" type="button" data-act="add-gasto" id="fab" aria-label="Adicionar gasto"></button>
+<div id="pops"></div>
+<div id="modals"></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>

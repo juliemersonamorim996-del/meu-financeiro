@@ -1,0 +1,21 @@
+{
+  "name": "MeuFinanceiro",
+  "short_name": "MeuFinanceiro",
+  "description": "Controle financeiro pessoal: gasto diário, cartões de crédito, metas e rendimento no CDI.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0A0B0E",
+  "theme_color": "#0A0B0E",
+  "lang": "pt-BR",
+  "dir": "ltr",
+  "icons": [
+    { "src": "icone-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icone-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Anotar gasto", "short_name": "Gasto", "url": "./#/gastos" },
+    { "name": "Carteira e cartões", "short_name": "Carteira", "url": "./#/carteira" }
+  ]
+}
