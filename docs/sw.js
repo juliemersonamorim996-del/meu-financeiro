@@ -1,5 +1,5 @@
 // Service worker do MeuFinanceiro — deixa o app abrir sem internet.
-const CACHE = 'mf-d2527fcd';
+const CACHE = 'mf-5ea54a76';
 const ARQUIVOS = ['./', './index.html', './manifest.webmanifest', './icone-192.png', './icone-512.png', './icone-apple-180.png', './icone-maskable-512.png'];
 
 self.addEventListener('install', e => {

@@ -12,7 +12,9 @@ App de controle financeiro pessoal: gasto diário por categoria, cartões de cr�
 
 ## Onde ficam os dados
 
-Sem login, tudo fica salvo **no próprio aparelho** (armazenamento do navegador). Para levar de um aparelho para outro, use **Configurações → Backup → Exportar / Importar**.
+Por padrão, tudo fica salvo **no próprio aparelho** (armazenamento do navegador). Para deixar celular e computador iguais, ligue a sincronização com um banco Supabase grátis — o passo a passo está em [SUPABASE.md](SUPABASE.md) e também dentro do app, em **Configurações → Sincronizar entre aparelhos**. Sem internet o app continua funcionando e envia o que faltou depois.
+
+Para levar os dados de um aparelho a outro sem nuvem, use **Configurações → Backup → Exportar / Importar**.
 
 ## Feito com
 
@@ -27,6 +29,7 @@ O app é montado a partir das partes em `src/`:
 | `01-style.html` | Todo o CSS: temas claro/escuro em `:root`, cartões de vidro, responsivo |
 | `02-markup.html` | Esqueleto da página (barra lateral, topo, menu de baixo) |
 | `03-core.js` | Dados, armazenamento, cálculo de saldos, CDI, cartões e faturas |
+| `03b-cloud.js` | Sincronização opcional na nuvem (Supabase): login, envio, fila offline |
 | `04-charts.js` | Gráficos em SVG |
 | `05-pages1.js` | Dashboard, Gasto diário, Transações |
 | `06-pages2.js` | Planejamento, Investimentos, Metas, Relatórios, Carteira, Configurações |

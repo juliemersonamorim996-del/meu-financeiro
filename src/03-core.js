@@ -190,7 +190,8 @@ let renderQueued = false;
 function changed() { S.v++; if (!renderQueued) { renderQueued = true; requestAnimationFrame(() => { renderQueued = false; window.MF.render(); }); } }
 const isDemo = () => S.ready && !(S.settings && S.settings.onboarded);
 
-// ---------- armazenamento: Claude (sincroniza) ou este navegador ----------
+// ---------- armazenamento: Claude, nuvem própria (Supabase) ou este navegador ----------
+const nuvem = (coll, id, dados) => { if (S.mode !== 'db' && window.MF && window.MF.cloudPush) window.MF.cloudPush(coll, id, dados); };
 const LS_KEY = 'meufinanceiro:v1';
 const store = {
   db: null, q: {},
@@ -234,24 +235,24 @@ const store = {
     });
   },
   saveSettings(patch) {
-    S.settings = { ...(S.settings || {}), ...patch }; changed();
+    S.settings = { ...(S.settings || {}), ...patch }; changed(); nuvem('settings', 'main', S.settings);
     if (this.db) { const body = clean(S.settings); return this.run('app/settings', () => this.db.doc('app/settings').set(body)); }
     this.saveLocal(); return Promise.resolve();
   },
   put(coll, obj) {
-    S[coll] = { ...S[coll], [obj.id]: obj }; changed();
+    S[coll] = { ...S[coll], [obj.id]: obj }; changed(); nuvem(coll, obj.id, obj);
     if (this.db) { const { id, ...body } = obj; const b = clean(body); return this.run(coll + '/' + id, () => this.db.collection(coll).doc(id).set(b)); }
     this.saveLocal(); return Promise.resolve();
   },
   del(coll, id) {
-    const o = { ...S[coll] }; delete o[id]; S[coll] = o; changed();
+    const o = { ...S[coll] }; delete o[id]; S[coll] = o; changed(); nuvem(coll, id, null);
     if (this.db) return this.run(coll + '/' + id, () => this.db.collection(coll).doc(id).delete());
     this.saveLocal(); return Promise.resolve();
   },
   putTx(tx, prev) {
     if (prev && mOf(prev.data) !== mOf(tx.data)) this.delTx(prev);
     const m = mOf(tx.data), existed = !!S.tx[m];
-    S.tx = { ...S.tx, [m]: { ...(S.tx[m] || {}), [tx.id]: tx } }; changed();
+    S.tx = { ...S.tx, [m]: { ...(S.tx[m] || {}), [tx.id]: tx } }; changed(); nuvem('tx', m + ':' + tx.id, tx);
     if (this.db) {
       const ref = this.db.doc('tx/' + m), body = clean(tx);
       return this.run('tx/' + m, async () => {
@@ -268,14 +269,30 @@ const store = {
   },
   delTx(tx) {
     const m = mOf(tx.data);
-    S.tx = { ...S.tx, [m]: { ...(S.tx[m] || {}), [tx.id]: null } }; changed();
+    S.tx = { ...S.tx, [m]: { ...(S.tx[m] || {}), [tx.id]: null } }; changed(); nuvem('tx', m + ':' + tx.id, null);
     if (this.db) return this.run('tx/' + m, () => this.db.doc('tx/' + m).update({ items: { [tx.id]: null } }));
     this.saveLocal(); return Promise.resolve();
   },
   async replaceAll(data) { // importar backup / apagar tudo
+    const antes = this.db ? null : [
+      ['settings', 'main'],
+      ...['accounts', 'cards', 'goals', 'subs'].flatMap(c => Object.keys(S[c] || {}).map(id => [c, id])),
+      ...Object.entries(S.tx || {}).flatMap(([m, it]) => Object.keys(it).map(id => ['tx', m + ':' + id])),
+    ];
     if (!this.db) {
       S.settings = data.settings || null; S.accounts = data.accounts || {}; S.cards = data.cards || {}; S.goals = data.goals || {}; S.subs = data.subs || {}; S.tx = data.tx || {};
-      this.saveLocal(); changed(); return;
+      this.saveLocal(); changed();
+      if (antes) { // apaga na nuvem o que saiu e manda o que entrou
+        const agora = new Set();
+        if (S.settings) agora.add('settings|main');
+        for (const c of ['accounts', 'cards', 'goals', 'subs']) for (const id of Object.keys(S[c] || {})) agora.add(c + '|' + id);
+        for (const [m, it] of Object.entries(S.tx || {})) for (const id of Object.keys(it)) agora.add('tx|' + m + ':' + id);
+        for (const [c, id] of antes) if (!agora.has(c + '|' + id)) nuvem(c, id, null);
+        if (S.settings) nuvem('settings', 'main', S.settings);
+        for (const c of ['accounts', 'cards', 'goals', 'subs']) for (const [id, o] of Object.entries(S[c] || {})) nuvem(c, id, o);
+        for (const [m, it] of Object.entries(S.tx || {})) for (const [id, t] of Object.entries(it)) nuvem('tx', m + ':' + id, t);
+      }
+      return;
     }
     const db = this.db;
     for (const c of ['accounts', 'cards', 'goals', 'subs']) {

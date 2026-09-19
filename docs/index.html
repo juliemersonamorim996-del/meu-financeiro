@@ -405,6 +405,12 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;min-width:560px}
 .pay-hint{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);padding:9px 12px;border-radius:12px;background:var(--hover);margin-top:-4px}
 .pay-hint svg.i{width:17px;height:17px;flex:none}
 .pay-hint b{color:var(--text)}
+.passos{counter-reset:passo;display:grid;gap:10px;margin:0 0 14px;padding:0;list-style:none}
+.passos li{counter-increment:passo;position:relative;padding-left:38px;min-height:26px;font-size:13.5px;color:var(--text-2);line-height:1.6}
+.passos li::before{content:counter(passo);position:absolute;left:0;top:0;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;background:color-mix(in srgb,var(--green) 18%,transparent);color:var(--green)}
+.passos b{color:var(--text)}
+.passos code{font-size:12.5px;background:var(--hover);padding:1px 6px;border-radius:6px}
+pre.sql{margin:0;padding:12px 14px;border-radius:14px;background:var(--hover);border:1px solid var(--line);overflow-x:auto;font-size:12px;line-height:1.5;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text-2);max-height:220px}
 .theme-pick{display:flex;gap:10px;flex-wrap:wrap}
 .theme-pick button{flex:1;min-width:104px;display:grid;gap:8px;justify-items:center;padding:14px 10px;border-radius:18px;border:1px solid var(--line);background:var(--glass-in);font-weight:600;font-size:13px;color:var(--text-2)}
 .theme-pick button .sw{width:100%;height:44px;border-radius:12px;border:1px solid var(--line-2);position:relative;overflow:hidden}
@@ -743,7 +749,8 @@ let renderQueued = false;
 function changed() { S.v++; if (!renderQueued) { renderQueued = true; requestAnimationFrame(() => { renderQueued = false; window.MF.render(); }); } }
 const isDemo = () => S.ready && !(S.settings && S.settings.onboarded);
 
-// ---------- armazenamento: Claude (sincroniza) ou este navegador ----------
+// ---------- armazenamento: Claude, nuvem própria (Supabase) ou este navegador ----------
+const nuvem = (coll, id, dados) => { if (S.mode !== 'db' && window.MF && window.MF.cloudPush) window.MF.cloudPush(coll, id, dados); };
 const LS_KEY = 'meufinanceiro:v1';
 const store = {
   db: null, q: {},
@@ -787,24 +794,24 @@ const store = {
     });
   },
   saveSettings(patch) {
-    S.settings = { ...(S.settings || {}), ...patch }; changed();
+    S.settings = { ...(S.settings || {}), ...patch }; changed(); nuvem('settings', 'main', S.settings);
     if (this.db) { const body = clean(S.settings); return this.run('app/settings', () => this.db.doc('app/settings').set(body)); }
     this.saveLocal(); return Promise.resolve();
   },
   put(coll, obj) {
-    S[coll] = { ...S[coll], [obj.id]: obj }; changed();
+    S[coll] = { ...S[coll], [obj.id]: obj }; changed(); nuvem(coll, obj.id, obj);
     if (this.db) { const { id, ...body } = obj; const b = clean(body); return this.run(coll + '/' + id, () => this.db.collection(coll).doc(id).set(b)); }
     this.saveLocal(); return Promise.resolve();
   },
   del(coll, id) {
-    const o = { ...S[coll] }; delete o[id]; S[coll] = o; changed();
+    const o = { ...S[coll] }; delete o[id]; S[coll] = o; changed(); nuvem(coll, id, null);
     if (this.db) return this.run(coll + '/' + id, () => this.db.collection(coll).doc(id).delete());
     this.saveLocal(); return Promise.resolve();
   },
   putTx(tx, prev) {
     if (prev && mOf(prev.data) !== mOf(tx.data)) this.delTx(prev);
     const m = mOf(tx.data), existed = !!S.tx[m];
-    S.tx = { ...S.tx, [m]: { ...(S.tx[m] || {}), [tx.id]: tx } }; changed();
+    S.tx = { ...S.tx, [m]: { ...(S.tx[m] || {}), [tx.id]: tx } }; changed(); nuvem('tx', m + ':' + tx.id, tx);
     if (this.db) {
       const ref = this.db.doc('tx/' + m), body = clean(tx);
       return this.run('tx/' + m, async () => {
@@ -821,14 +828,30 @@ const store = {
   },
   delTx(tx) {
     const m = mOf(tx.data);
-    S.tx = { ...S.tx, [m]: { ...(S.tx[m] || {}), [tx.id]: null } }; changed();
+    S.tx = { ...S.tx, [m]: { ...(S.tx[m] || {}), [tx.id]: null } }; changed(); nuvem('tx', m + ':' + tx.id, null);
     if (this.db) return this.run('tx/' + m, () => this.db.doc('tx/' + m).update({ items: { [tx.id]: null } }));
     this.saveLocal(); return Promise.resolve();
   },
   async replaceAll(data) { // importar backup / apagar tudo
+    const antes = this.db ? null : [
+      ['settings', 'main'],
+      ...['accounts', 'cards', 'goals', 'subs'].flatMap(c => Object.keys(S[c] || {}).map(id => [c, id])),
+      ...Object.entries(S.tx || {}).flatMap(([m, it]) => Object.keys(it).map(id => ['tx', m + ':' + id])),
+    ];
     if (!this.db) {
       S.settings = data.settings || null; S.accounts = data.accounts || {}; S.cards = data.cards || {}; S.goals = data.goals || {}; S.subs = data.subs || {}; S.tx = data.tx || {};
-      this.saveLocal(); changed(); return;
+      this.saveLocal(); changed();
+      if (antes) { // apaga na nuvem o que saiu e manda o que entrou
+        const agora = new Set();
+        if (S.settings) agora.add('settings|main');
+        for (const c of ['accounts', 'cards', 'goals', 'subs']) for (const id of Object.keys(S[c] || {})) agora.add(c + '|' + id);
+        for (const [m, it] of Object.entries(S.tx || {})) for (const id of Object.keys(it)) agora.add('tx|' + m + ':' + id);
+        for (const [c, id] of antes) if (!agora.has(c + '|' + id)) nuvem(c, id, null);
+        if (S.settings) nuvem('settings', 'main', S.settings);
+        for (const c of ['accounts', 'cards', 'goals', 'subs']) for (const [id, o] of Object.entries(S[c] || {})) nuvem(c, id, o);
+        for (const [m, it] of Object.entries(S.tx || {})) for (const [id, t] of Object.entries(it)) nuvem('tx', m + ':' + id, t);
+      }
+      return;
     }
     const db = this.db;
     for (const c of ['accounts', 'cards', 'goals', 'subs']) {
@@ -1119,6 +1142,176 @@ window.MF = {
   THEMES, applyTheme, storedTheme, isDarkNow, themeNow: () => themeNow,
   setToast(fn) { toast = fn; },
 };
+})();
+</script>
+
+<script>
+(() => {
+'use strict';
+/* =========================================================
+   Sincronização na nuvem (Supabase) — opcional.
+   Só liga quando você põe o link do projeto + a chave e faz login.
+   Sem isso, o app continua salvando só neste aparelho.
+   ========================================================= */
+const MF = window.MF;
+const { S, store, mOf, changed } = MF;
+
+const CFG_KEY = 'mf:sb', FILA_KEY = 'mf:fila';
+const LIB = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js';
+const TABELA = 'mf_itens';
+
+const ls = {
+  get(k, f) { try { return JSON.parse(localStorage.getItem(k)) ?? f; } catch (e) { return f; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* sem espaço */ } },
+  del(k) { try { localStorage.removeItem(k); } catch (e) { } },
+};
+
+let sb = null, uid = null, email = '', estado = 'off', erro = '', canal = null;
+const fila = () => ls.get(FILA_KEY, []);
+const cfg = () => ls.get(CFG_KEY, null);
+
+function setEstado(e, msg = '') { estado = e; erro = msg; changed(); }
+const status = () => ({ estado, email, erro, pendentes: fila().length, configurado: !!cfg() });
+
+function carregarLib() {
+  if (window.supabase) return Promise.resolve(window.supabase);
+  return new Promise((ok, falhou) => {
+    const s = document.createElement('script');
+    s.src = LIB; s.onload = () => ok(window.supabase); s.onerror = () => falhou(new Error('lib'));
+    document.head.appendChild(s);
+  });
+}
+
+// ---------- estado do app <-> linhas da tabela ----------
+function linhas() { // tudo que está no app, pronto para subir
+  const out = [];
+  if (S.settings) out.push(['settings', 'main', S.settings]);
+  for (const c of ['accounts', 'cards', 'goals', 'subs']) for (const [id, o] of Object.entries(S[c] || {})) out.push([c, id, o]);
+  for (const [m, items] of Object.entries(S.tx || {})) for (const [id, t] of Object.entries(items)) if (t) out.push(['tx', m + ':' + id, t]);
+  return out;
+}
+function aplicar(colecao, item_id, dados, apagado) {
+  if (colecao === 'settings') { S.settings = apagado ? null : dados; return; }
+  if (colecao === 'tx') {
+    const [m, id] = item_id.split(':');
+    if (!m || !id) return;
+    S.tx = { ...S.tx, [m]: { ...(S.tx[m] || {}), [id]: apagado ? null : dados } };
+    return;
+  }
+  if (!['accounts', 'cards', 'goals', 'subs'].includes(colecao)) return;
+  const o = { ...S[colecao] };
+  if (apagado) delete o[item_id]; else o[item_id] = { ...dados, id: item_id };
+  S[colecao] = o;
+}
+
+// ---------- envio ----------
+function enfileirar(colecao, item_id, dados) {
+  const f = fila().filter(x => !(x[0] === colecao && x[1] === item_id));
+  f.push([colecao, item_id, dados]);
+  ls.set(FILA_KEY, f.slice(-800));
+  changed();
+}
+async function enviar(itens) {
+  if (!sb || !uid || !itens.length) return false;
+  const agora = new Date().toISOString();
+  const linhas = itens.map(([colecao, item_id, dados]) => ({ user_id: uid, colecao, item_id, dados: dados || null, apagado: !dados, atualizado: agora }));
+  for (let i = 0; i < linhas.length; i += 200) {
+    const { error } = await sb.from(TABELA).upsert(linhas.slice(i, i + 200), { onConflict: 'user_id,colecao,item_id' });
+    if (error) throw error;
+  }
+  return true;
+}
+async function flush() {
+  const f = fila();
+  if (!f.length || !sb || !uid) return;
+  try { await enviar(f); ls.set(FILA_KEY, []); setEstado('on'); }
+  catch (e) { setEstado('offline', e.message || 'sem conexão'); }
+}
+MF.cloudPush = (colecao, item_id, dados) => {
+  if (!cfg()) return;           // nuvem nem configurada: só local
+  enfileirar(colecao, item_id, dados);
+  if (sb && uid) flush();
+};
+
+// ---------- entrada ----------
+async function puxarTudo() {
+  const { data, error } = await sb.from(TABELA).select('colecao,item_id,dados,apagado').eq('user_id', uid);
+  if (error) throw error;
+  const remoto = new Set();
+  for (const r of data) { aplicar(r.colecao, r.item_id, r.dados, r.apagado); remoto.add(r.colecao + '|' + r.item_id); }
+  // o que só existe aqui sobe (nada se perde ao ligar a nuvem)
+  const subir = linhas().filter(([c, id]) => !remoto.has(c + '|' + id));
+  store.saveLocal(); changed();
+  if (subir.length) { try { await enviar(subir); } catch (e) { subir.forEach(x => enfileirar(...x)); } }
+}
+function ouvir() {
+  if (canal) { try { sb.removeChannel(canal); } catch (e) { } }
+  canal = sb.channel('mf-' + uid)
+    .on('postgres_changes', { event: '*', schema: 'public', table: TABELA, filter: 'user_id=eq.' + uid }, p => {
+      const r = p.new && p.new.item_id ? p.new : p.old;
+      if (!r) return;
+      aplicar(r.colecao, r.item_id, r.dados, r.apagado || p.eventType === 'DELETE');
+      store.saveLocal(); changed();
+    })
+    .subscribe();
+}
+async function sessao(s) {
+  if (!s) { uid = null; email = ''; setEstado(cfg() ? 'config' : 'off'); return; }
+  uid = s.user.id; email = s.user.email || '';
+  setEstado('conectando');
+  try { await puxarTudo(); ouvir(); await flush(); setEstado('on'); }
+  catch (e) { setEstado('offline', e.message || 'sem conexão'); }
+}
+
+async function iniciar() {
+  const c = cfg();
+  if (!c || !c.url || !c.key) { setEstado('off'); return; }
+  if (S.mode === 'db') { setEstado('off'); return; }  // dentro do Claude a sincronização já é do Claude
+  setEstado('conectando');
+  try {
+    const lib = await carregarLib();
+    sb = lib.createClient(c.url, c.key, { auth: { persistSession: true, autoRefreshToken: true } });
+    sb.auth.onAuthStateChange((_, s) => sessao(s));
+    const { data } = await sb.auth.getSession();
+    await sessao(data && data.session);
+  } catch (e) { setEstado('erro', 'Não consegui conectar. Confira o link e a chave do projeto.'); }
+}
+
+// ---------- ações usadas pela tela de Configurações ----------
+MF.cloud = {
+  status, cfg,
+  async salvarCfg(url, key) {
+    url = String(url || '').trim().replace(/\/+$/, ''); key = String(key || '').trim();
+    if (!/^https:\/\/.+\.supabase\.co$/.test(url)) throw new Error('O link do projeto é parecido com https://abcdefg.supabase.co');
+    if (key.length < 30) throw new Error('A chave anon public é bem longa — confira se copiou inteira.');
+    ls.set(CFG_KEY, { url, key }); sb = null; uid = null;
+    await iniciar();
+  },
+  removerCfg() { ls.del(CFG_KEY); ls.del(FILA_KEY); if (canal) { try { sb.removeChannel(canal); } catch (e) { } } sb = null; uid = null; email = ''; setEstado('off'); },
+  async entrar(mail, senha) {
+    if (!sb) await iniciar();
+    if (!sb) throw new Error('Configure o link e a chave primeiro.');
+    const { error } = await sb.auth.signInWithPassword({ email: mail, password: senha });
+    if (error) throw new Error(error.message === 'Invalid login credentials' ? 'E-mail ou senha não conferem.' : error.message);
+  },
+  async criar(mail, senha) {
+    if (!sb) await iniciar();
+    if (!sb) throw new Error('Configure o link e a chave primeiro.');
+    const { data, error } = await sb.auth.signUp({ email: mail, password: senha });
+    if (error) throw new Error(error.message);
+    return !(data && data.session); // true = precisa confirmar o e-mail
+  },
+  async sair() { if (sb) await sb.auth.signOut(); uid = null; email = ''; setEstado('config'); },
+  async subirTudo() {
+    if (!sb || !uid) throw new Error('Entre com seu login primeiro.');
+    await enviar(linhas()); await flush(); setEstado('on');
+  },
+  iniciar,
+};
+
+addEventListener('online', flush);
+setInterval(() => { if (fila().length && sb && uid) flush(); }, 30000);
+setTimeout(iniciar, 600);
 })();
 </script>
 
@@ -1674,6 +1867,7 @@ const MF = window.MF;
 const { $, $$, esc, brl, brl0, nf, ic, todayS, mOf, mAdd, mDays, mLabel, mShort, dn, ds, pad, MES, S, UI, isDemo, cfg, cats, catsRec,
   catOf, catName, accList, accOf, invAccs, D, balAt, allAt, sumYield, CLASSES, ACC_TIPOS, clamp, shortDate, moneyIn, parseMoney } = MF;
 const { PAGES, empty, demoBanner } = MF;
+const SYNC_CLAUDE = `<div class="card-h">${MF.ic('sync')}<h2>Sincronização</h2><span class="sp"></span><span class="tag g">ligada</span></div><p class="sub" style="margin:0">Tudo fica salvo na sua conta do Claude. Abra este mesmo link no celular e no computador — o que você anota em um aparece no outro.</p>`;
 const C = () => MF.charts;
 
 // ============================================================
@@ -1986,12 +2180,43 @@ PAGES.config = {
       MF.store.saveSettings({ nome: $('#c-nome').value.trim() || 'Juliemerson', contaPadrao: $('#c-conta').value, cdi: isFinite(cdi) && cdi > 0 && cdi < 100 ? cdi : cfg().cdi, cdiData: $('#c-cdid').value || cfg().cdiData });
       MF.toast('Configurações salvas'); });
     $('#c-import', main).addEventListener('change', e => MF.importFile(e.target.files[0]));
+    main.addEventListener('submit', e => {
+      if (e.target.id === 'sb-cfg-form') { e.preventDefault(); MF.cloudSalvar($('#sb-url').value, $('#sb-key').value); }
+      if (e.target.id === 'sb-login-form') { e.preventDefault(); MF.cloudEntrar($('#sb-mail').value.trim(), $('#sb-pass').value); }
+    });
   },
   r: {
     demo: demoBanner,
     cats: () => catList(false), catsrec: () => catList(true),
     tema: () => MF.THEMES.map(([k, l, i]) => `<button type="button" class="${MF.themeNow() === k ? 'on' : ''}" data-t="${k}" data-act="set-theme"><span class="sw"></span>${ic(i)}${l}</button>`).join(''),
-    sync: () => S.mode === 'db'
+    sync: () => {
+      if (S.mode === 'db') return SYNC_CLAUDE;
+      const st = MF.cloud.status(), h = `<div class="card-h">${ic('cloud')}<h2>Sincronizar entre aparelhos</h2><span class="sp"></span>${
+        st.estado === 'on' ? '<span class="tag g">ligada</span>' : st.estado === 'offline' ? '<span class="tag y">sem conexão</span>' : st.estado === 'conectando' ? '<span class="tag">conectando…</span>' : '<span class="tag">só neste aparelho</span>'}</div>`;
+      if (st.estado === 'on' || st.estado === 'offline') {
+        return h + `<p class="sub" style="margin:0 0 12px">Ligada como <b style="color:var(--text)">${esc(st.email)}</b>. O que você anota aqui aparece nos seus outros aparelhos em alguns segundos.${st.pendentes ? ` <b style="color:var(--gold)">${st.pendentes} lançamento(s) esperando internet.</b>` : ''}</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-sm" data-act="sb-push">${ic('upload')}Enviar tudo agora</button><button class="btn btn-sm" data-act="sb-logout">Sair desta conta</button></div>`;
+      }
+      if (st.configurado) {
+        return h + `<p class="sub" style="margin:0 0 12px">Projeto conectado. Entre com seu login para sincronizar.${st.erro ? ` <b style="color:var(--red)">${esc(st.erro)}</b>` : ''}</p>
+        <form class="form" id="sb-login-form"><div class="two"><label class="field"><span>Seu e-mail</span><input class="in" type="email" id="sb-mail" autocomplete="email" required></label>
+        <label class="field"><span>Senha</span><input class="in" type="password" id="sb-pass" autocomplete="current-password" minlength="6" required></label></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-p" type="submit">${ic('check')}Entrar</button><button class="btn" type="button" data-act="sb-signup">Criar meu login</button><button class="btn" type="button" data-act="sb-remove">Desligar nuvem</button></div></form>`;
+      }
+      return h + `<p class="sub" style="margin:0 0 12px">Sem isso, seus dados ficam só neste aparelho. Ligando, celular e computador ficam iguais. É de graça e leva uns 5 minutos — os dados ficam num banco seu, só seu.</p>
+      <ol class="passos">
+        <li>Crie uma conta grátis em <b>supabase.com</b> e um projeto novo (região São Paulo).</li>
+        <li>No projeto, abra <b>SQL Editor</b>, cole o comando abaixo e clique em <b>Run</b>.</li>
+        <li>Vá em <b>Settings → API</b> e copie o <b>Project URL</b> e a chave <b>anon public</b> (nunca a service_role) nos campos abaixo.</li>
+      </ol>
+      <details style="margin-bottom:14px"><summary class="link" style="cursor:pointer">Ver o comando SQL</summary>
+      <pre class="sql" id="sb-sql">${esc(MF.SQL_NUVEM)}</pre>
+      <button class="btn btn-sm" style="margin-top:8px" data-act="sb-copy">${ic('file')}Copiar comando</button></details>
+      <form class="form" id="sb-cfg-form"><label class="field"><span>Project URL</span><input class="in" id="sb-url" placeholder="https://xxxxxxxx.supabase.co" required></label>
+      <label class="field"><span>Chave anon public</span><input class="in" id="sb-key" placeholder="eyJhbGciOi..." required></label>
+      <button class="btn btn-p" type="submit">${ic('cloud')}Conectar</button></form>`;
+    },
+    syncOld: () => S.mode === 'db'
       ? `<div class="card-h">${ic('sync')}<h2>Sincronização</h2><span class="sp"></span><span class="tag g">ligada</span></div><p class="sub" style="margin:0">Tudo fica salvo na sua conta do Claude. Abra este mesmo link no celular e no computador — o que você anota em um aparece no outro.</p>`
       : `<div class="card-h">${ic('phone')}<h2>Onde seus dados ficam</h2><span class="sp"></span><span class="tag y">neste aparelho</span></div><p class="sub" style="margin:0">Esta cópia salva só neste navegador. Para usar no celular e no computador com os mesmos dados, abra pelo link do Claude — lá a sincronização é automática. Use o backup para levar os dados de um lugar para outro.</p>`,
   },
@@ -2579,6 +2804,15 @@ Object.assign(ACT, {
   'inv-save': el => { const a = accOf(el.dataset.id); MF.transferForm({ para: a.id, de: MF.defaultAcc() === a.id ? undefined : MF.defaultAcc(), title: 'Guardar no ' + a.nome }); },
   'inv-take': el => { const a = accOf(el.dataset.id); MF.transferForm({ de: a.id, para: MF.defaultAcc() === a.id ? undefined : MF.defaultAcc(), title: 'Resgatar do ' + a.nome }); },
   'cdi-edit': () => MF.cdiForm(),
+  'sb-copy': () => { navigator.clipboard.writeText(MF.SQL_NUVEM).then(() => toast('Comando copiado')).catch(() => toast('Selecione o texto e copie à mão.')); },
+  'sb-signup': () => {
+    const mail = $('#sb-mail').value.trim(), senha = $('#sb-pass').value;
+    if (!mail || senha.length < 6) { toast('Preencha o e-mail e uma senha de 6 letras ou mais.'); return; }
+    cloudTry(() => MF.cloud.criar(mail, senha), precisaConfirmar => toast(precisaConfirmar ? 'Login criado. Confirme pelo e-mail e depois entre.' : 'Login criado e conectado!'));
+  },
+  'sb-logout': () => cloudTry(() => MF.cloud.sair(), () => toast('Você saiu. Os dados continuam aqui no aparelho.')),
+  'sb-remove': () => MF.confirmBox('Desligar a sincronização?', 'Os dados continuam salvos neste aparelho; só param de ir para a nuvem.', 'Desligar', () => { MF.cloud.removerCfg(); MF.render(); }),
+  'sb-push': () => cloudTry(() => MF.cloud.subirTudo(), () => toast('Tudo enviado')),
   'goal-new': () => MF.goalForm(),
   'goal-edit': el => MF.goalForm(MF.src().goals[el.dataset.id]),
   'goal-add': el => MF.goalAdd(MF.src().goals[el.dataset.id]),
@@ -2594,6 +2828,35 @@ function setTheme(t) {
   if (!isDemo()) store.saveSettings({ tema: t });
   MF.render();
 }
+
+// ---------- nuvem própria (Supabase) ----------
+MF.SQL_NUVEM = `create table if not exists public.mf_itens (
+  user_id uuid not null references auth.users on delete cascade,
+  colecao text not null,
+  item_id text not null,
+  dados jsonb,
+  apagado boolean not null default false,
+  atualizado timestamptz not null default now(),
+  primary key (user_id, colecao, item_id)
+);
+
+alter table public.mf_itens enable row level security;
+
+create policy "dono le" on public.mf_itens for select using (auth.uid() = user_id);
+create policy "dono insere" on public.mf_itens for insert with check (auth.uid() = user_id);
+create policy "dono atualiza" on public.mf_itens for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "dono apaga" on public.mf_itens for delete using (auth.uid() = user_id);
+
+alter publication supabase_realtime add table public.mf_itens;`;
+
+async function cloudTry(fn, ok) {
+  try { const r = await fn(); if (ok) ok(r); }
+  catch (e) { toast(e.message || 'Não consegui conectar agora.'); }
+  MF.render();
+}
+
+MF.cloudSalvar = (url, key) => cloudTry(() => MF.cloud.salvarCfg(url, key), () => toast('Projeto conectado. Agora crie seu login ou entre.'));
+MF.cloudEntrar = (mail, senha) => cloudTry(() => MF.cloud.entrar(mail, senha), () => toast('Sincronização ligada'));
 
 // ---------- eventos globais ----------
 document.addEventListener('click', e => {

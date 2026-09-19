@@ -8,6 +8,7 @@ const MF = window.MF;
 const { $, $$, esc, brl, brl0, nf, ic, todayS, mOf, mAdd, mDays, mLabel, mShort, dn, ds, pad, MES, S, UI, isDemo, cfg, cats, catsRec,
   catOf, catName, accList, accOf, invAccs, D, balAt, allAt, sumYield, CLASSES, ACC_TIPOS, clamp, shortDate, moneyIn, parseMoney } = MF;
 const { PAGES, empty, demoBanner } = MF;
+const SYNC_CLAUDE = `<div class="card-h">${MF.ic('sync')}<h2>Sincronização</h2><span class="sp"></span><span class="tag g">ligada</span></div><p class="sub" style="margin:0">Tudo fica salvo na sua conta do Claude. Abra este mesmo link no celular e no computador — o que você anota em um aparece no outro.</p>`;
 const C = () => MF.charts;
 
 // ============================================================
@@ -320,12 +321,43 @@ PAGES.config = {
       MF.store.saveSettings({ nome: $('#c-nome').value.trim() || 'Juliemerson', contaPadrao: $('#c-conta').value, cdi: isFinite(cdi) && cdi > 0 && cdi < 100 ? cdi : cfg().cdi, cdiData: $('#c-cdid').value || cfg().cdiData });
       MF.toast('Configurações salvas'); });
     $('#c-import', main).addEventListener('change', e => MF.importFile(e.target.files[0]));
+    main.addEventListener('submit', e => {
+      if (e.target.id === 'sb-cfg-form') { e.preventDefault(); MF.cloudSalvar($('#sb-url').value, $('#sb-key').value); }
+      if (e.target.id === 'sb-login-form') { e.preventDefault(); MF.cloudEntrar($('#sb-mail').value.trim(), $('#sb-pass').value); }
+    });
   },
   r: {
     demo: demoBanner,
     cats: () => catList(false), catsrec: () => catList(true),
     tema: () => MF.THEMES.map(([k, l, i]) => `<button type="button" class="${MF.themeNow() === k ? 'on' : ''}" data-t="${k}" data-act="set-theme"><span class="sw"></span>${ic(i)}${l}</button>`).join(''),
-    sync: () => S.mode === 'db'
+    sync: () => {
+      if (S.mode === 'db') return SYNC_CLAUDE;
+      const st = MF.cloud.status(), h = `<div class="card-h">${ic('cloud')}<h2>Sincronizar entre aparelhos</h2><span class="sp"></span>${
+        st.estado === 'on' ? '<span class="tag g">ligada</span>' : st.estado === 'offline' ? '<span class="tag y">sem conexão</span>' : st.estado === 'conectando' ? '<span class="tag">conectando…</span>' : '<span class="tag">só neste aparelho</span>'}</div>`;
+      if (st.estado === 'on' || st.estado === 'offline') {
+        return h + `<p class="sub" style="margin:0 0 12px">Ligada como <b style="color:var(--text)">${esc(st.email)}</b>. O que você anota aqui aparece nos seus outros aparelhos em alguns segundos.${st.pendentes ? ` <b style="color:var(--gold)">${st.pendentes} lançamento(s) esperando internet.</b>` : ''}</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-sm" data-act="sb-push">${ic('upload')}Enviar tudo agora</button><button class="btn btn-sm" data-act="sb-logout">Sair desta conta</button></div>`;
+      }
+      if (st.configurado) {
+        return h + `<p class="sub" style="margin:0 0 12px">Projeto conectado. Entre com seu login para sincronizar.${st.erro ? ` <b style="color:var(--red)">${esc(st.erro)}</b>` : ''}</p>
+        <form class="form" id="sb-login-form"><div class="two"><label class="field"><span>Seu e-mail</span><input class="in" type="email" id="sb-mail" autocomplete="email" required></label>
+        <label class="field"><span>Senha</span><input class="in" type="password" id="sb-pass" autocomplete="current-password" minlength="6" required></label></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-p" type="submit">${ic('check')}Entrar</button><button class="btn" type="button" data-act="sb-signup">Criar meu login</button><button class="btn" type="button" data-act="sb-remove">Desligar nuvem</button></div></form>`;
+      }
+      return h + `<p class="sub" style="margin:0 0 12px">Sem isso, seus dados ficam só neste aparelho. Ligando, celular e computador ficam iguais. É de graça e leva uns 5 minutos — os dados ficam num banco seu, só seu.</p>
+      <ol class="passos">
+        <li>Crie uma conta grátis em <b>supabase.com</b> e um projeto novo (região São Paulo).</li>
+        <li>No projeto, abra <b>SQL Editor</b>, cole o comando abaixo e clique em <b>Run</b>.</li>
+        <li>Vá em <b>Settings → API</b> e copie o <b>Project URL</b> e a chave <b>anon public</b> (nunca a service_role) nos campos abaixo.</li>
+      </ol>
+      <details style="margin-bottom:14px"><summary class="link" style="cursor:pointer">Ver o comando SQL</summary>
+      <pre class="sql" id="sb-sql">${esc(MF.SQL_NUVEM)}</pre>
+      <button class="btn btn-sm" style="margin-top:8px" data-act="sb-copy">${ic('file')}Copiar comando</button></details>
+      <form class="form" id="sb-cfg-form"><label class="field"><span>Project URL</span><input class="in" id="sb-url" placeholder="https://xxxxxxxx.supabase.co" required></label>
+      <label class="field"><span>Chave anon public</span><input class="in" id="sb-key" placeholder="eyJhbGciOi..." required></label>
+      <button class="btn btn-p" type="submit">${ic('cloud')}Conectar</button></form>`;
+    },
+    syncOld: () => S.mode === 'db'
       ? `<div class="card-h">${ic('sync')}<h2>Sincronização</h2><span class="sp"></span><span class="tag g">ligada</span></div><p class="sub" style="margin:0">Tudo fica salvo na sua conta do Claude. Abra este mesmo link no celular e no computador — o que você anota em um aparece no outro.</p>`
       : `<div class="card-h">${ic('phone')}<h2>Onde seus dados ficam</h2><span class="sp"></span><span class="tag y">neste aparelho</span></div><p class="sub" style="margin:0">Esta cópia salva só neste navegador. Para usar no celular e no computador com os mesmos dados, abra pelo link do Claude — lá a sincronização é automática. Use o backup para levar os dados de um lugar para outro.</p>`,
   },

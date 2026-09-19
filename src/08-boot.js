@@ -156,6 +156,15 @@ Object.assign(ACT, {
   'inv-save': el => { const a = accOf(el.dataset.id); MF.transferForm({ para: a.id, de: MF.defaultAcc() === a.id ? undefined : MF.defaultAcc(), title: 'Guardar no ' + a.nome }); },
   'inv-take': el => { const a = accOf(el.dataset.id); MF.transferForm({ de: a.id, para: MF.defaultAcc() === a.id ? undefined : MF.defaultAcc(), title: 'Resgatar do ' + a.nome }); },
   'cdi-edit': () => MF.cdiForm(),
+  'sb-copy': () => { navigator.clipboard.writeText(MF.SQL_NUVEM).then(() => toast('Comando copiado')).catch(() => toast('Selecione o texto e copie à mão.')); },
+  'sb-signup': () => {
+    const mail = $('#sb-mail').value.trim(), senha = $('#sb-pass').value;
+    if (!mail || senha.length < 6) { toast('Preencha o e-mail e uma senha de 6 letras ou mais.'); return; }
+    cloudTry(() => MF.cloud.criar(mail, senha), precisaConfirmar => toast(precisaConfirmar ? 'Login criado. Confirme pelo e-mail e depois entre.' : 'Login criado e conectado!'));
+  },
+  'sb-logout': () => cloudTry(() => MF.cloud.sair(), () => toast('Você saiu. Os dados continuam aqui no aparelho.')),
+  'sb-remove': () => MF.confirmBox('Desligar a sincronização?', 'Os dados continuam salvos neste aparelho; só param de ir para a nuvem.', 'Desligar', () => { MF.cloud.removerCfg(); MF.render(); }),
+  'sb-push': () => cloudTry(() => MF.cloud.subirTudo(), () => toast('Tudo enviado')),
   'goal-new': () => MF.goalForm(),
   'goal-edit': el => MF.goalForm(MF.src().goals[el.dataset.id]),
   'goal-add': el => MF.goalAdd(MF.src().goals[el.dataset.id]),
@@ -171,6 +180,35 @@ function setTheme(t) {
   if (!isDemo()) store.saveSettings({ tema: t });
   MF.render();
 }
+
+// ---------- nuvem própria (Supabase) ----------
+MF.SQL_NUVEM = `create table if not exists public.mf_itens (
+  user_id uuid not null references auth.users on delete cascade,
+  colecao text not null,
+  item_id text not null,
+  dados jsonb,
+  apagado boolean not null default false,
+  atualizado timestamptz not null default now(),
+  primary key (user_id, colecao, item_id)
+);
+
+alter table public.mf_itens enable row level security;
+
+create policy "dono le" on public.mf_itens for select using (auth.uid() = user_id);
+create policy "dono insere" on public.mf_itens for insert with check (auth.uid() = user_id);
+create policy "dono atualiza" on public.mf_itens for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "dono apaga" on public.mf_itens for delete using (auth.uid() = user_id);
+
+alter publication supabase_realtime add table public.mf_itens;`;
+
+async function cloudTry(fn, ok) {
+  try { const r = await fn(); if (ok) ok(r); }
+  catch (e) { toast(e.message || 'Não consegui conectar agora.'); }
+  MF.render();
+}
+
+MF.cloudSalvar = (url, key) => cloudTry(() => MF.cloud.salvarCfg(url, key), () => toast('Projeto conectado. Agora crie seu login ou entre.'));
+MF.cloudEntrar = (mail, senha) => cloudTry(() => MF.cloud.entrar(mail, senha), () => toast('Sincronização ligada'));
 
 // ---------- eventos globais ----------
 document.addEventListener('click', e => {
